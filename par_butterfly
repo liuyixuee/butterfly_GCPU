@@ -1,0 +1,7 @@
+#ifndef PAR_BUTTERFLY_H
+#define PAR_BUTTERFLY_H
+#include "graph.h"
+
+int BC(graph* bipartiteGraph,int bound , int edge_bound);
+
+#endif

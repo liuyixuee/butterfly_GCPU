@@ -1,0 +1,74 @@
+#include <iostream>
+#include "graph.h"
+#include "wtime.h"
+#include "util.h"
+#include <cub/cub.cuh>
+#include <fstream>
+#include <cub/util_type.cuh>
+
+#define blocknumber 128
+#define blocksize 1024
+#define hash_blocksize 1024
+using namespace std;
+// using namespace cub;
+
+
+int BC(graph* G,int bound,int edge_bound)
+{
+    //int bound=1000000;
+    //int edge_bound=10000000;
+    double startTime,exectionTime,heap_time,D_heap_time,hash_time,D_total_time;
+    
+    long long* D_beginPos,*H_par_beginPos,*D_par_beginPos,*H_directNB,*D_directNB;
+    int* D_edgeList,*tmp_edgeList,*hashTable;
+    float *time;
+    unsigned long long *globalCount;
+    HRR(cudaMalloc(&globalCount, sizeof(unsigned long long)));
+    *globalCount=0;
+    
+    HRR(cudaMalloc((void **) &hashTable,sizeof(int)*bound));
+    HRR(cudaMalloc((void **) &D_par_beginPos,sizeof(long long)*(G->uCount+G->vCount+1)));
+    HRR(cudaMalloc((void **) &D_directNB,sizeof(int)*(G->uCount+G->vCount+1)));
+    HRR(cudaMalloc((void **) &D_edgeList,sizeof(int)*(edge_bound)));
+    int par_num=(G->uCount+G->vCount)%bound==0?(G->uCount+G->vCount)/bound:(G->uCount+G->vCount)/bound+1;
+    printf("par num is %d",par_num);
+    for(int vertex=0;vertex<G->uCount+G->vCount;vertex++)
+    {
+        HRR(cudaMemcpy(D_directNB,G->edgeList+G->beginPos[vertex],sizeof(int)*(G->beginPos[vertex+1]-G->beginPos[vertex]),cudaMemcpyHostToDevice));
+        long long edge_addr=0;
+        for(int round =0; round<par_num;round++)
+        {
+            edge_addr=G->par_beginPos[round*(G->uCount+G->vCount)];
+            long long edge_num=G->par_beginPos[(round+1)*(G->uCount+G->vCount)]-edge_addr;
+            HRR(cudaMemcpy(D_par_beginPos,G->par_beginPos+round*(G->uCount+G->vCount),sizeof(long long)*(G->uCount+G->vCount),cudaMemcpyHostToDevice));
+            while(edge_num>0)
+            {
+                if(edge_num>edge_bound)
+                {
+                    HRR(cudaMemcpy(D_edgeList,G->par_edgeList+round*(G->uCount),sizeof(int)*edge_bound,cudaMemcpyHostToDevice));
+                    HRR(cudaDeviceSynchronize());
+                    hashBasedButterflyCounting_CPUGPU<<<blocknumber,hash_blocksize>>>(D_directNB,D_par_beginPos,D_edgeList,edge_bound,edge_addr,G->uCount,G->vCount,globalCount,hashTable,0,G->uCount+G->vCount);
+                    edge_num-=edge_bound;
+                    edge_addr+=edge_bound;
+                }
+                else
+                {
+                    HRR(cudaMemcpy(D_edgeList,G->par_edgeList,sizeof(int)*edge_num,cudaMemcpyHostToDevice));
+                    HRR(cudaDeviceSynchronize());
+                    hashBasedButterflyCounting_CPUGPU<<<blocknumber,hash_blocksize>>>(D_directNB,D_par_beginPos,D_edgeList,edge_num,edge_addr,G->uCount,G->vCount,globalCount,perVertexCount,0,G->uCount+G->vCount);
+                    edge_num=0;
+                    edge_addr+=edge_num;
+                }
+            }
+        }
+    }
+    
+    
+    //cout<<"time on first round  :"<<frT_time<<endl;
+    //cout<<"time on second round :"<<srT_time<<endl;
+    HRR(cudaFree(D_edgeList));
+    
+    // delete(perVertexCount);
+    return 0;
+}
+
